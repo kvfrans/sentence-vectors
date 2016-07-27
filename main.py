@@ -2,6 +2,7 @@ import tensorflow as tf
 import numpy as np
 import json
 import reader
+import os
 
 class Model():
     def __init__(self):
@@ -44,12 +45,12 @@ class Model():
         # self.generation_loss = tf.nn.l2_loss(self.sentences_guessed_flattened - self.sentences_in_flattened) / (self.sentence_embed_size * self.sentence_length)
         self.latent_loss = 0.5 * tf.reduce_sum(tf.square(self.z_mean) + tf.square(self.z_stddev) - tf.log(tf.square(self.z_stddev)) - 1,1)
         #
-        self.cost = tf.reduce_mean(self.generation_loss + 0.0*self.latent_loss)
+        self.cost = tf.reduce_mean(self.generation_loss)
 
         params = tf.trainable_variables()
         gradients = tf.gradients(self.cost, params)
         clipped_gradients, norm = tf.clip_by_global_norm(gradients,self.max_gradient_norm)
-        self.optim = tf.train.AdamOptimizer(0.01)
+        self.optim = tf.train.AdamOptimizer(0.0001)
         self.update = self.optim.apply_gradients(zip(clipped_gradients,params))
 
         self.sess = tf.Session()
@@ -139,22 +140,50 @@ class Model():
         #     # print partway.shape
         #     np.set_printoptions(threshold=np.inf)
 
-        raw_data = reader.ptb_raw_data("/Users/kevin/Documents/Datasets/penn-treebank/data")
+        raw_data = reader.ptb_raw_data("/home/kevin/Documents/Datasets/simple-examples/data")
         train_data, valid_data, test_data, vocabsize = raw_data
         print vocabsize
         # print train_data
 
-        for step, x in enumerate(reader.ptb_iterator(test_data, self.batchsize, self.sentence_length)):
-            x2 = np.copy(x)
-            c = np.zeros((self.batchsize,1), dtype=np.int32)
-            c.fill(10001)
-            x = np.hstack((x[:,1:],c))
-            # x: input
-            # x2: desired output
-            gen_loss, latent_loss, _ = self.sess.run([self.generation_loss, self.latent_loss, self.update], feed_dict={self.sentences_in: x, self.sentences_in_decoded: x2})
-            print "gen loss: %f latent loss: %f perplexity: %f" % (np.mean(gen_loss), np.mean(latent_loss), np.exp(np.mean(gen_loss)))
+        list(reader.ptb_iterator(valid_data, self.batchsize, self.sentence_length))
 
 
+
+        saver = tf.train.Saver(max_to_keep=2)
+        for epoch in xrange(10000):
+            total_genloss = 0
+            steps = 0
+            for step, x in enumerate(reader.ptb_iterator(test_data, self.batchsize, self.sentence_length)):
+                x2 = np.copy(x)
+                c = np.zeros((self.batchsize,1), dtype=np.int32)
+                c.fill(10001)
+                x = np.hstack((x[:,1:],c))
+                # x: input
+                # x2: desired output
+                gen_loss, latent_loss, _ = self.sess.run([self.generation_loss, self.latent_loss, self.update], feed_dict={self.sentences_in: x, self.sentences_in_decoded: x2})
+                gl = np.mean(gen_loss) / self.sentence_length
+                # print "gen loss: %f latent loss: %f perplexity: %f" % (gl, np.mean(latent_loss), np.exp(gl))
+                total_genloss += gl
+                steps = steps + 1
+            print "epoch %d genloss %f perplexity %f" % (epoch, total_genloss / steps, np.exp(total_genloss/steps))
+            total_validloss = 0
+            validsteps = 0
+            for step, x in enumerate(reader.ptb_iterator(valid_data, self.batchsize, self.sentence_length)):
+                x2 = np.copy(x)
+                c = np.zeros((self.batchsize,1), dtype=np.int32)
+                c.fill(10001)
+                x = np.hstack((x[:,1:],c))
+                # x: input
+                # x2: desired output
+                gen_loss, latent_loss = self.sess.run([self.generation_loss, self.latent_loss], feed_dict={self.sentences_in: x, self.sentences_in_decoded: x2})
+                gl = np.mean(gen_loss) / self.sentence_length
+                # print "gen loss: %f latent loss: %f perplexity: %f" % (gl, np.mean(latent_loss), np.exp(gl))
+                total_validloss += gl
+                validsteps = validsteps + 1
+            print "valid %d genloss %f perplexity %f" % (epoch, total_validloss / validsteps, np.exp(total_validloss/validsteps))
+
+            if epoch % 50 == 0:
+                saver.save(self.sess, os.getcwd()+"/training/train",global_step=epoch)
 
 
 
